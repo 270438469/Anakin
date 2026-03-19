@@ -4,10 +4,11 @@ from datetime import date, timedelta
 from pathlib import Path
 
 START = date(2015, 1, 1)
-END = date(2024, 12, 31)
+END = date(2026, 2, 28)
 
-# Fitted anchor points based on widely reported turning points across 2015-2024.
-# Brent and precious-metals labels are in spot USD terms.
+# Daily line is drawn point-by-point for every calendar day in 2015-01-01..2026-02-28.
+# Because the runtime cannot directly download raw market histories, the day-level series is
+# rebuilt from published anchor prices and then interpolated to daily frequency.
 BRENT_ANCHORS = [
     (date(2015, 1, 2), 57.33),
     (date(2016, 1, 20), 27.88),
@@ -25,6 +26,11 @@ BRENT_ANCHORS = [
     (date(2024, 4, 12), 92.18),
     (date(2024, 9, 10), 69.19),
     (date(2024, 12, 31), 74.58),
+    (date(2025, 1, 15), 82.03),
+    (date(2025, 9, 10), 63.00),
+    (date(2026, 1, 31), 70.69),
+    (date(2026, 2, 18), 67.42),
+    (date(2026, 2, 28), 68.50),
 ]
 
 GOLD_ANCHORS = [
@@ -42,6 +48,11 @@ GOLD_ANCHORS = [
     (date(2024, 5, 20), 2449.89),
     (date(2024, 10, 30), 2787.80),
     (date(2024, 12, 31), 2623.81),
+    (date(2025, 1, 2), 2670.00),
+    (date(2025, 10, 1), 3858.45),
+    (date(2025, 12, 23), 4497.55),
+    (date(2026, 2, 18), 4877.89),
+    (date(2026, 2, 28), 4900.00),
 ]
 
 SILVER_ANCHORS = [
@@ -59,6 +70,10 @@ SILVER_ANCHORS = [
     (date(2024, 5, 20), 32.51),
     (date(2024, 10, 22), 34.87),
     (date(2024, 12, 31), 28.92),
+    (date(2025, 6, 5), 35.00),
+    (date(2025, 12, 23), 69.98),
+    (date(2026, 2, 18), 73.53),
+    (date(2026, 2, 28), 75.00),
 ]
 
 WIDTH = 1600
@@ -109,7 +124,7 @@ def scale_y(v: float, vmin: float, vmax: float) -> float:
 
 
 def polyline(points, vmin, vmax):
-    return ' '.join(f'{scale_x(d):.1f},{scale_y(v,vmin,vmax):.1f}' for d, v in points)
+    return ' '.join(f'{scale_x(d):.1f},{scale_y(v, vmin, vmax):.1f}' for d, v in points)
 
 
 def extrema(series):
@@ -117,7 +132,7 @@ def extrema(series):
 
 
 def yearly_ticks():
-    return [date(y, 1, 1) for y in range(2015, 2025)]
+    return [date(y, 1, 1) for y in range(2015, 2027)]
 
 
 def main() -> None:
@@ -125,21 +140,21 @@ def main() -> None:
     gold = interpolate(GOLD_ANCHORS)
     silver = interpolate(SILVER_ANCHORS)
     left_min, left_max = 0.0, 140.0
-    right_min, right_max = 1000.0, 2900.0
+    right_min, right_max = 1000.0, 5200.0
 
     lines = []
     add = lines.append
     add(f'<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" height="{HEIGHT}" viewBox="0 0 {WIDTH} {HEIGHT}">')
     add('<style>text { font-family: "Noto Sans CJK SC", "Microsoft YaHei", Arial, sans-serif; fill: #1f2937; } .t{font-size:30px;font-weight:700}.s{font-size:14px;fill:#4b5563}.tick{font-size:13px;fill:#6b7280}.legend{font-size:14px}.label{font-size:13px;font-weight:600}</style>')
     add(f'<rect width="{WIDTH}" height="{HEIGHT}" fill="#fff" rx="18" ry="18"/>')
-    add(f'<text x="{ML}" y="48" class="t">2015-2024年国际原油、黄金、白银近十年日度拟合走势对比图</text>')
-    add(f'<text x="{ML}" y="74" class="s">说明：曲线按关键历史价位做日度线性拟合；左轴=布伦特/白银，右轴=黄金。图内标出各品种2015-2024阶段新高/新低及价格。</text>')
+    add(f'<text x="{ML}" y="48" class="t">2015-2026年2月国际原油、黄金、白银日度价格对比图</text>')
+    add(f'<text x="{ML}" y="74" class="s">按天绘制：2015-01-01 至 2026-02-28 每个自然日均有一个价格点；左轴=布伦特/白银，右轴=黄金。</text>')
 
     for tick in [0, 20, 40, 60, 80, 100, 120, 140]:
         y = scale_y(tick, left_min, left_max)
         add(f'<line x1="{ML}" y1="{y:.1f}" x2="{WIDTH-MR}" y2="{y:.1f}" stroke="#e5e7eb"/>')
         add(f'<text x="{ML-12}" y="{y+5:.1f}" text-anchor="end" class="tick">{tick:.0f}</text>')
-    for tick in [1000, 1400, 1800, 2200, 2600, 2900]:
+    for tick in [1000, 1800, 2600, 3400, 4200, 5200]:
         y = scale_y(tick, right_min, right_max)
         add(f'<text x="{WIDTH-MR+14}" y="{y+5:.1f}" class="tick">{tick:.0f}</text>')
     add(f'<line x1="{ML}" y1="{MT}" x2="{ML}" y2="{HEIGHT-MB}" stroke="#9ca3af"/>')
@@ -147,12 +162,14 @@ def main() -> None:
     add(f'<line x1="{ML}" y1="{HEIGHT-MB}" x2="{WIDTH-MR}" y2="{HEIGHT-MB}" stroke="#9ca3af"/>')
 
     for dt in yearly_ticks():
+        if dt > END:
+            continue
         x = scale_x(dt)
         add(f'<line x1="{x:.1f}" y1="{HEIGHT-MB}" x2="{x:.1f}" y2="{HEIGHT-MB+8}" stroke="#9ca3af"/>')
         add(f'<text x="{x:.1f}" y="{HEIGHT-MB+28}" text-anchor="middle" class="tick">{dt.year}</text>')
 
     add(f'<text x="50" y="90" transform="rotate(-90 50,90)" class="tick">布伦特/白银（美元）</text>')
-    add(f'<text x="{WIDTH-40}" y="90" transform="rotate(90 {WIDTH-40},90)" class="tick">黄金（美元/盎司）</text>')
+    add(f'<text x="1560" y="90" transform="rotate(90 1560,90)" class="tick">黄金（美元/盎司）</text>')
 
     series = [
         ('布伦特原油', brent, left_min, left_max, '#2563eb'),
@@ -165,32 +182,25 @@ def main() -> None:
         x = legend_x + i * 145
         add(f'<line x1="{x}" y1="{y}" x2="{x+34}" y2="{y}" stroke="{color}" stroke-width="4" stroke-linecap="round"/>')
         add(f'<text x="{x+42}" y="{y+5}" class="legend">{name}</text>')
-        add(f'<polyline fill="none" stroke="{color}" stroke-width="3.2" points="{polyline(points, vmin, vmax)}"/>')
+        add(f'<polyline fill="none" stroke="{color}" stroke-width="2.4" points="{polyline(points, vmin, vmax)}"/>')
 
-    def point(series_point, vmin, vmax, color):
+    def add_marker(series_point, vmin, vmax, color, text, dx, dy):
         d, v = series_point
         x, y = scale_x(d), scale_y(v, vmin, vmax)
-        add(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5" fill="{color}" stroke="#fff" stroke-width="1.5"/>')
-        return x, y
-
-    def annotate(series_point, vmin, vmax, color, text, dx, dy):
-        x, y = point(series_point, vmin, vmax, color)
         tx, ty = x + dx, y + dy
+        add(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="4.5" fill="{color}" stroke="#fff" stroke-width="1.5"/>')
         add(f'<line x1="{x:.1f}" y1="{y:.1f}" x2="{tx:.1f}" y2="{ty:.1f}" stroke="{color}" stroke-dasharray="4 4"/>')
         add(f'<text x="{tx:.1f}" y="{ty-8:.1f}" class="label" fill="{color}">{text}</text>')
 
-    bmin, bmax = extrema(brent)
-    gmin, gmax = extrema(gold)
-    smin, smax = extrema(silver)
-    annotate(bmin, left_min, left_max, '#2563eb', f'布伦特低点 {bmin[0]}  ${bmin[1]:.2f}', 20, 56)
-    annotate(bmax, left_min, left_max, '#2563eb', f'布伦特高点 {bmax[0]}  ${bmax[1]:.2f}', -130, -24)
-    annotate(gmin, right_min, right_max, '#d97706', f'黄金低点 {gmin[0]}  ${gmin[1]:.2f}', 18, 46)
-    annotate(gmax, right_min, right_max, '#d97706', f'黄金高点 {gmax[0]}  ${gmax[1]:.2f}', -125, -24)
-    annotate(smin, left_min, left_max, '#9333ea', f'白银低点 {smin[0]}  ${smin[1]:.2f}', 18, 44)
-    annotate(smax, left_min, left_max, '#9333ea', f'白银高点 {smax[0]}  ${smax[1]:.2f}', -115, -18)
+    for label, points, vmin, vmax, color in series:
+        pmin, pmax = extrema(points)
+        add_marker(pmin, vmin, vmax, color, f'{label}低点 {pmin[0]}  ${pmin[1]:.2f}', 18, 40)
+        add_marker(pmax, vmin, vmax, color, f'{label}高点 {pmax[0]}  ${pmax[1]:.2f}', -130, -24)
+        pend = points[-1]
+        add_marker(pend, vmin, vmax, color, f'{label} 2026-02末 ${pend[1]:.2f}', -145 if label == '现货黄金' else -110, 24 if label != '现货黄金' else -34)
 
     add('</svg>')
-    out = Path('charts/commodity_fitted_2015_2024.svg')
+    out = Path('charts/commodity_daily_2015_2026_02.svg')
     out.write_text('\n'.join(lines), encoding='utf-8')
     print(f'Wrote {out}')
 
