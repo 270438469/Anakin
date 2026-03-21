@@ -2,6 +2,7 @@ import time
 import asyncio
 import aiohttp
 import requests
+import argparse
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 import logging
@@ -25,6 +26,9 @@ logger = logging.getLogger(__name__)
 
 class PolymarketStrategy:
     """Polymarket BTC 价格预测自动交易策略"""
+
+    DAILY_REPORT_HOUR = 8
+    DAILY_REPORT_MINUTE = 0
     
     def __init__(self, api_key: str = "", private_key: str = "", log_dir: str = "logs"):
         """
@@ -945,6 +949,9 @@ class PolymarketStrategy:
                 filename = "latest.json"
 
             filepath = os.path.join(self.log_dir, filename)
+            directory = os.path.dirname(filepath)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
 
             with open(filepath, 'w', encoding='utf-8') as f:
                 json.dump(prediction_data, indent=2, ensure_ascii=False, fp=f)
@@ -955,6 +962,151 @@ class PolymarketStrategy:
         except Exception as e:
             logger.error(f"保存预测数据失败: {e}")
             return ""
+
+    def build_daily_report_text(self, prediction_data: Dict, report_time: Optional[datetime] = None) -> str:
+        """将预测数据格式化为中文晨报文本。"""
+        report_time = report_time or datetime.now()
+        event_info = prediction_data.get('event_info', {})
+        btc_analysis = prediction_data.get('btc_price_analysis', {})
+        markets = prediction_data.get('markets', [])
+        time_range = event_info.get('time_range', {})
+
+        lines = [
+            '# Claw 每日早报',
+            '',
+            f'- 汇报时间：{report_time.strftime("%Y-%m-%d %H:%M:%S")}',
+            f'- 事件标题：{event_info.get("title") or "N/A"}',
+            f'- 标的：{event_info.get("symbol") or event_info.get("ticker") or "N/A"}',
+        ]
+
+        if time_range.get('full_range'):
+            lines.append(f'- 市场时间窗：{time_range["full_range"]}')
+
+        if event_info.get('end_date'):
+            lines.append(f'- 市场结束时间：{event_info.get("end_date")}')
+
+        if event_info.get('time_until_end'):
+            lines.append(f'- 距离结束剩余：{event_info.get("time_until_end")}')
+
+        if btc_analysis:
+            lines.extend([
+                '',
+                '## BTC 价格观察',
+                f'- 当前价格：${btc_analysis.get("current_price", 0):,.2f}',
+            ])
+            if btc_analysis.get('price_to_beat') is not None:
+                lines.append(f'- 目标价格：${btc_analysis.get("price_to_beat", 0):,.2f}')
+            if btc_analysis.get('price_change') is not None:
+                lines.append(f'- 价格变化：${btc_analysis.get("price_change", 0):+,.2f}')
+            if btc_analysis.get('percent_change') is not None:
+                lines.append(f'- 变化幅度：{btc_analysis.get("percent_change", 0):+.4f}%')
+            if btc_analysis.get('direction'):
+                lines.append(f'- 方向判断：{btc_analysis.get("direction")}')
+
+        if event_info:
+            lines.extend([
+                '',
+                '## 市场概览',
+                f'- 成交量：${event_info.get("volume", 0):,.2f}',
+                f'- 流动性：${event_info.get("liquidity", 0):,.2f}',
+            ])
+
+        if markets:
+            lines.extend(['', '## 盘口摘要'])
+            for index, market in enumerate(markets, start=1):
+                lines.append(f'### 市场 {index}')
+                lines.append(f'- 问题：{market.get("question") or "N/A"}')
+                if market.get('up_odds') is not None:
+                    lines.append(f'- Up 概率/赔率：{market["up_odds"]:.4f} / {market["up_odds"] * 100:.2f}%')
+                if market.get('down_odds') is not None:
+                    lines.append(f'- Down 概率/赔率：{market["down_odds"]:.4f} / {market["down_odds"] * 100:.2f}%')
+                if market.get('up_buy_price') is not None:
+                    lines.append(f'- Up 买入价：{market["up_buy_price"]:.4f}')
+                if market.get('down_buy_price') is not None:
+                    lines.append(f'- Down 买入价：{market["down_buy_price"]:.4f}')
+                lines.append('')
+
+        return '\n'.join(lines).rstrip() + '\n'
+
+    def save_daily_report(self, report_text: str, report_time: Optional[datetime] = None) -> str:
+        """保存每日汇报 Markdown 文件，并同步覆盖 latest_report.md。"""
+        report_time = report_time or datetime.now()
+        reports_dir = os.path.join(self.log_dir, 'daily_reports')
+        os.makedirs(reports_dir, exist_ok=True)
+
+        timestamp = report_time.strftime('%Y%m%d_%H%M%S')
+        report_path = os.path.join(reports_dir, f'report_{timestamp}.md')
+        latest_path = os.path.join(reports_dir, 'latest_report.md')
+
+        for path in (report_path, latest_path):
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(report_text)
+
+        logger.info(f"每日汇报已保存到: {report_path}")
+        return report_path
+
+    def generate_daily_report(self, report_time: Optional[datetime] = None) -> Optional[Dict[str, str]]:
+        """生成并保存一次每日汇报。"""
+        report_time = report_time or datetime.now()
+        logger.info(f"开始生成每日汇报，时间: {report_time.strftime('%Y-%m-%d %H:%M:%S')}")
+
+        current_url = self.get_latest_btc_updown_event()
+        if not current_url:
+            logger.error('未能确定最新15分钟事件URL，无法生成汇报')
+            return None
+
+        btc_price = self.get_btc_price()
+        if btc_price <= 0:
+            logger.warning('BTC 当前价格获取失败，汇报将继续生成但价格可能为 0')
+
+        market_data = self.get_event_by_url(current_url)
+        if not market_data:
+            logger.error('未能获取市场数据，无法生成汇报')
+            return None
+
+        prediction_data = self.extract_prediction_data(market_data, btc_price=btc_price)
+        json_path = self.save_prediction_data(prediction_data)
+        report_text = self.build_daily_report_text(prediction_data, report_time=report_time)
+        report_path = self.save_daily_report(report_text, report_time=report_time)
+
+        logger.info('每日汇报生成完成')
+        return {
+            'url': current_url,
+            'json_path': json_path,
+            'report_path': report_path,
+        }
+
+    @classmethod
+    def seconds_until_daily_report(cls, now: Optional[datetime] = None, hour: Optional[int] = None, minute: Optional[int] = None) -> int:
+        """计算距离下一次每日汇报的秒数。"""
+        now = now or datetime.now()
+        hour = cls.DAILY_REPORT_HOUR if hour is None else hour
+        minute = cls.DAILY_REPORT_MINUTE if minute is None else minute
+
+        next_run = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if next_run <= now:
+            next_run += timedelta(days=1)
+        return max(1, int((next_run - now).total_seconds()))
+
+    def schedule_daily_report(self, hour: Optional[int] = None, minute: Optional[int] = None):
+        """每天固定时间生成一次汇报，默认每天 08:00。"""
+        hour = self.DAILY_REPORT_HOUR if hour is None else hour
+        minute = self.DAILY_REPORT_MINUTE if minute is None else minute
+        logger.info(f"已启用每日定时汇报，将在每天 {hour:02d}:{minute:02d} 执行。")
+
+        while True:
+            sleep_seconds = self.seconds_until_daily_report(hour=hour, minute=minute)
+            next_run = datetime.now() + timedelta(seconds=sleep_seconds)
+            logger.info(f"下一次汇报时间: {next_run.strftime('%Y-%m-%d %H:%M:%S')}，等待 {sleep_seconds} 秒")
+            time.sleep(sleep_seconds)
+
+            try:
+                self.generate_daily_report()
+            except KeyboardInterrupt:
+                logger.info('\n每日汇报任务已停止')
+                break
+            except Exception as e:
+                logger.error(f"执行每日汇报失败: {e}")
     
     def get_order_book_prices(self, token_ids: List[str]) -> Dict:
         """获取订单簿数据，返回UP和DOWN的买入价格
@@ -1203,14 +1355,27 @@ class PolymarketStrategy:
                 time.sleep(interval)
 
 
+def parse_args():
+    """解析命令行参数。"""
+    parser = argparse.ArgumentParser(description='Polymarket BTC 15m 监控与每日汇报工具')
+    parser.add_argument('--mode', choices=['daily-report', 'run-once', 'monitor'], default='daily-report', help='运行模式：daily-report=每天08:00汇报，run-once=立即生成一次汇报，monitor=按分钟持续监控')
+    parser.add_argument('--hour', type=int, default=PolymarketStrategy.DAILY_REPORT_HOUR, help='daily-report 模式的小时，默认 8')
+    parser.add_argument('--minute', type=int, default=PolymarketStrategy.DAILY_REPORT_MINUTE, help='daily-report 模式的分钟，默认 0')
+    parser.add_argument('--interval', type=int, default=60, help='monitor 模式的检查间隔秒数，默认 60')
+    return parser.parse_args()
+
+
 def main():
     """主函数"""
-    # 初始化策略
+    args = parse_args()
     strategy = PolymarketStrategy()
-    
-    # 监控 BTC updown 15m 市场
-    # 不指定URL -> 自动获取最新的15分钟场次
-    strategy.monitor_btc_updown_15m(url=None, interval=60)
+
+    if args.mode == 'run-once':
+        strategy.generate_daily_report()
+    elif args.mode == 'monitor':
+        strategy.monitor_btc_updown_15m(url=None, interval=args.interval)
+    else:
+        strategy.schedule_daily_report(hour=args.hour, minute=args.minute)
 
 
 if __name__ == "__main__":

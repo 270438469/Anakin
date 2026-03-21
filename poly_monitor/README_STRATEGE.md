@@ -52,9 +52,30 @@
 
 ## 使用方法
 
-### 基本运行
+### 每日早 8 点自动汇报（默认）
 ```python
 python stratege.py
+```
+
+脚本默认进入 `daily-report` 模式，会在**每天 08:00** 自动生成一次晨报，并输出到：
+
+- `logs/latest.json`：最新结构化行情数据
+- `logs/daily_reports/latest_report.md`：最新 Markdown 汇报
+- `logs/daily_reports/report_YYYYMMDD_HHMMSS.md`：带时间戳的历史汇报
+
+### 立即生成一次汇报
+```python
+python stratege.py --mode run-once
+```
+
+### 保持原来的分钟级监控模式
+```python
+python stratege.py --mode monitor --interval 60
+```
+
+### 自定义汇报时间
+```python
+python stratege.py --mode daily-report --hour 8 --minute 0
 ```
 
 ### 修改监控URL
